@@ -37,7 +37,7 @@
  */
 
 // Change EEPROM version if the structure changes
-#define EEPROM_VERSION "V70"
+#define EEPROM_VERSION "V74"
 #define EEPROM_OFFSET 100
 
 // Check the integrity of data offsets.
@@ -192,7 +192,7 @@ typedef struct SettingsDataStruct {
   // AUTO_BED_LEVELING_BILINEAR
   //
   uint8_t grid_max_x, grid_max_y;                       // GRID_MAX_POINTS_X, GRID_MAX_POINTS_Y
-  xy_int_t bilinear_grid_spacing, bilinear_start;       // G29 L F
+  xy_pos_t bilinear_grid_spacing, bilinear_start;       // G29 L F
   #if ENABLED(AUTO_BED_LEVELING_BILINEAR)
     bed_mesh_t z_values;                                // G29
   #else
@@ -223,8 +223,7 @@ typedef struct SettingsDataStruct {
     abc_float_t delta_endstop_adj;                      // M666 XYZ
     float delta_radius,                                 // M665 R
           delta_diagonal_rod,                           // M665 L
-          delta_segments_per_second,                    // M665 S
-          delta_calibration_radius;                     // M665 B
+          delta_segments_per_second;                    // M665 S
     abc_float_t delta_tower_angle_trim;                 // M665 XYZ
   #elif EITHER(X_DUAL_ENDSTOPS, Y_DUAL_ENDSTOPS) || Z_MULTI_ENDSTOPS
     float x2_endstop_adj,                               // M666 X
@@ -243,7 +242,7 @@ typedef struct SettingsDataStruct {
   //
   // PIDTEMP
   //
-  PIDC_t hotendPID[HOTENDS];                            // M301 En PIDC / M303 En U
+  PIDCF_t hotendPID[HOTENDS];                           // M301 En PIDCF / M303 En U
   int16_t lpq_len;                                      // M301 L
 
   //
@@ -398,7 +397,7 @@ void MarlinSettings::postprocess() {
     fwretract.refresh_autoretract();
   #endif
 
-  #if BOTH(JUNCTION_DEVIATION, LIN_ADVANCE)
+  #if HAS_LINEAR_E_JERK
     planner.recalculate_max_e_jerk();
   #endif
 
@@ -445,6 +444,13 @@ void MarlinSettings::postprocess() {
   }
 
 #endif // SD_FIRMWARE_UPDATE
+
+#ifdef ARCHIM2_SPI_FLASH_EEPROM_BACKUP_SIZE
+  static_assert(
+      EEPROM_OFFSET + sizeof(SettingsData) < ARCHIM2_SPI_FLASH_EEPROM_BACKUP_SIZE,
+      "ARCHIM2_SPI_FLASH_EEPROM_BACKUP_SIZE is insufficient to capture all EEPROM data."
+    );
+#endif
 
 #define DEBUG_OUT ENABLED(EEPROM_CHITCHAT)
 #include "../core/debug_out.h"
@@ -516,7 +522,7 @@ void MarlinSettings::postprocess() {
 
       #if HAS_CLASSIC_JERK
         EEPROM_WRITE(planner.max_jerk);
-        #if BOTH(JUNCTION_DEVIATION, LIN_ADVANCE)
+        #if HAS_LINEAR_E_JERK
           dummy = float(DEFAULT_EJERK);
           EEPROM_WRITE(dummy);
         #endif
@@ -525,7 +531,7 @@ void MarlinSettings::postprocess() {
         EEPROM_WRITE(planner_max_jerk);
       #endif
 
-      #if ENABLED(JUNCTION_DEVIATION)
+      #if DISABLED(CLASSIC_JERK)
         EEPROM_WRITE(planner.junction_deviation_mm);
       #else
         dummy = 0.02f;
@@ -652,7 +658,7 @@ void MarlinSettings::postprocess() {
       #else
         // For disabled Bilinear Grid write an empty 3x3 grid
         const uint8_t grid_max_x = 3, grid_max_y = 3;
-        const xy_int_t bilinear_start{0}, bilinear_grid_spacing{0};
+        const xy_pos_t bilinear_start{0}, bilinear_grid_spacing{0};
         dummy = 0;
         EEPROM_WRITE(grid_max_x);
         EEPROM_WRITE(grid_max_y);
@@ -717,7 +723,6 @@ void MarlinSettings::postprocess() {
         EEPROM_WRITE(delta_radius);              // 1 float
         EEPROM_WRITE(delta_diagonal_rod);        // 1 float
         EEPROM_WRITE(delta_segments_per_second); // 1 float
-        EEPROM_WRITE(delta_calibration_radius);  // 1 float
         EEPROM_WRITE(delta_tower_angle_trim);    // 3 floats
 
       #elif EITHER(X_DUAL_ENDSTOPS, Y_DUAL_ENDSTOPS) || Z_MULTI_ENDSTOPS
@@ -780,10 +785,14 @@ void MarlinSettings::postprocess() {
     {
       _FIELD_TEST(hotendPID);
       HOTEND_LOOP() {
-        PIDC_t pidc = {
-          PID_PARAM(Kp, e), PID_PARAM(Ki, e), PID_PARAM(Kd, e), PID_PARAM(Kc, e)
+        PIDCF_t pidcf = {
+                       PID_PARAM(Kp, e),
+          unscalePID_i(PID_PARAM(Ki, e)),
+          unscalePID_d(PID_PARAM(Kd, e)),
+                       PID_PARAM(Kc, e),
+                       PID_PARAM(Kf, e)
         };
-        EEPROM_WRITE(pidc);
+        EEPROM_WRITE(pidcf);
       }
 
       _FIELD_TEST(lpq_len);
@@ -801,12 +810,17 @@ void MarlinSettings::postprocess() {
     {
       _FIELD_TEST(bedPID);
 
-      #if DISABLED(PIDTEMPBED)
-        const PID_t bed_pid = { DUMMY_PID_VALUE, DUMMY_PID_VALUE, DUMMY_PID_VALUE };
-        EEPROM_WRITE(bed_pid);
-      #else
-        EEPROM_WRITE(thermalManager.temp_bed.pid);
-      #endif
+      const PID_t bed_pid = {
+        #if DISABLED(PIDTEMPBED)
+          DUMMY_PID_VALUE, DUMMY_PID_VALUE, DUMMY_PID_VALUE
+        #else
+          // Store the unscaled PID values
+          thermalManager.temp_bed.pid.Kp,
+          unscalePID_i(thermalManager.temp_bed.pid.Ki),
+          unscalePID_d(thermalManager.temp_bed.pid.Kd)
+        #endif
+      };
+      EEPROM_WRITE(bed_pid);
     }
 
     //
@@ -1316,14 +1330,14 @@ void MarlinSettings::postprocess() {
 
         #if HAS_CLASSIC_JERK
           EEPROM_READ(planner.max_jerk);
-          #if BOTH(JUNCTION_DEVIATION, LIN_ADVANCE)
+          #if HAS_LINEAR_E_JERK
             EEPROM_READ(dummy);
           #endif
         #else
           for (uint8_t q = 4; q--;) EEPROM_READ(dummy);
         #endif
 
-        #if ENABLED(JUNCTION_DEVIATION)
+        #if DISABLED(CLASSIC_JERK)
           EEPROM_READ(planner.junction_deviation_mm);
         #else
           EEPROM_READ(dummy);
@@ -1455,7 +1469,7 @@ void MarlinSettings::postprocess() {
         #endif // AUTO_BED_LEVELING_BILINEAR
           {
             // Skip past disabled (or stale) Bilinear Grid data
-            xy_int_t bgs, bs;
+            xy_pos_t bgs, bs;
             EEPROM_READ(bgs);
             EEPROM_READ(bs);
             for (uint16_t q = grid_max_x * grid_max_y; q--;) EEPROM_READ(dummy);
@@ -1519,7 +1533,6 @@ void MarlinSettings::postprocess() {
           EEPROM_READ(delta_radius);              // 1 float
           EEPROM_READ(delta_diagonal_rod);        // 1 float
           EEPROM_READ(delta_segments_per_second); // 1 float
-          EEPROM_READ(delta_calibration_radius);  // 1 float
           EEPROM_READ(delta_tower_angle_trim);    // 3 floats
 
         #elif EITHER(X_DUAL_ENDSTOPS, Y_DUAL_ENDSTOPS) || Z_MULTI_ENDSTOPS
@@ -1574,16 +1587,19 @@ void MarlinSettings::postprocess() {
       //
       {
         HOTEND_LOOP() {
-          PIDC_t pidc;
-          EEPROM_READ(pidc);
+          PIDCF_t pidcf;
+          EEPROM_READ(pidcf);
           #if ENABLED(PIDTEMP)
-            if (!validating && pidc.Kp != DUMMY_PID_VALUE) {
-              // No need to scale PID values since EEPROM values are scaled
-              PID_PARAM(Kp, e) = pidc.Kp;
-              PID_PARAM(Ki, e) = pidc.Ki;
-              PID_PARAM(Kd, e) = pidc.Kd;
+            if (!validating && pidcf.Kp != DUMMY_PID_VALUE) {
+              // Scale PID values since EEPROM values are unscaled
+              PID_PARAM(Kp, e) = pidcf.Kp;
+              PID_PARAM(Ki, e) = scalePID_i(pidcf.Ki);
+              PID_PARAM(Kd, e) = scalePID_d(pidcf.Kd);
               #if ENABLED(PID_EXTRUSION_SCALING)
-                PID_PARAM(Kc, e) = pidc.Kc;
+                PID_PARAM(Kc, e) = pidcf.Kc;
+              #endif
+              #if ENABLED(PID_FAN_SCALING)
+                PID_PARAM(Kf, e) = pidcf.Kf;
               #endif
             }
           #endif
@@ -1610,8 +1626,12 @@ void MarlinSettings::postprocess() {
         PID_t pid;
         EEPROM_READ(pid);
         #if ENABLED(PIDTEMPBED)
-          if (!validating && pid.Kp != DUMMY_PID_VALUE)
-            memcpy(&thermalManager.temp_bed.pid, &pid, sizeof(pid));
+          if (!validating && pid.Kp != DUMMY_PID_VALUE) {
+            // Scale PID values since EEPROM values are unscaled
+            thermalManager.temp_bed.pid.Kp = pid.Kp;
+            thermalManager.temp_bed.pid.Ki = scalePID_i(pid.Ki);
+            thermalManager.temp_bed.pid.Kd = scalePID_d(pid.Kd);
+          }
         #endif
       }
 
@@ -2076,9 +2096,21 @@ void MarlinSettings::postprocess() {
     return !eeprom_error;
   }
 
+  #ifdef ARCHIM2_SPI_FLASH_EEPROM_BACKUP_SIZE
+    extern bool restoreEEPROM();
+  #endif
+
   bool MarlinSettings::validate() {
     validating = true;
-    const bool success = _load();
+    #ifdef ARCHIM2_SPI_FLASH_EEPROM_BACKUP_SIZE
+      bool success = _load();
+      if (!success && restoreEEPROM()) {
+        SERIAL_ECHOLNPGM("Recovered backup EEPROM settings from SPI Flash");
+        success = _load();
+      }
+    #else
+      const bool success = _load();
+    #endif
     validating = false;
     return success;
   }
@@ -2230,12 +2262,12 @@ void MarlinSettings::reset() {
       #define DEFAULT_ZJERK 0
     #endif
     planner.max_jerk.set(DEFAULT_XJERK, DEFAULT_YJERK, DEFAULT_ZJERK);
-    #if !BOTH(JUNCTION_DEVIATION, LIN_ADVANCE)
+    #if HAS_CLASSIC_E_JERK
       planner.max_jerk.e = DEFAULT_EJERK;
     #endif
   #endif
 
-  #if ENABLED(JUNCTION_DEVIATION)
+  #if DISABLED(CLASSIC_JERK)
     planner.junction_deviation_mm = float(JUNCTION_DEVIATION_MM);
   #endif
 
@@ -2313,9 +2345,6 @@ void MarlinSettings::reset() {
   #endif
 
   #if HAS_BED_PROBE
-    #ifndef NOZZLE_TO_PROBE_OFFSET
-      #define NOZZLE_TO_PROBE_OFFSET { 0, 0, 0 }
-    #endif
     constexpr float dpo[XYZ] = NOZZLE_TO_PROBE_OFFSET;
     static_assert(COUNT(dpo) == 3, "NOZZLE_TO_PROBE_OFFSET must contain offsets for X, Y, and Z.");
     LOOP_XYZ(a) probe_offset[a] = dpo[a];
@@ -2347,7 +2376,6 @@ void MarlinSettings::reset() {
     delta_radius = DELTA_RADIUS;
     delta_diagonal_rod = DELTA_DIAGONAL_ROD;
     delta_segments_per_second = DELTA_SEGMENTS_PER_SECOND;
-    delta_calibration_radius = DELTA_CALIBRATION_RADIUS;
     delta_tower_angle_trim = dta;
 
   #elif EITHER(X_DUAL_ENDSTOPS, Y_DUAL_ENDSTOPS) || Z_MULTI_ENDSTOPS
@@ -2421,6 +2449,10 @@ void MarlinSettings::reset() {
       PID_PARAM(Kd, e) = scalePID_d(DEFAULT_Kd);
       #if ENABLED(PID_EXTRUSION_SCALING)
         PID_PARAM(Kc, e) = DEFAULT_Kc;
+      #endif
+
+      #if ENABLED(PID_FAN_SCALING)
+        PID_PARAM(Kf, e) = DEFAULT_Kf;
       #endif
     }
   #endif
@@ -2744,12 +2776,12 @@ void MarlinSettings::reset() {
     if (!forReplay) {
       CONFIG_ECHO_START();
       SERIAL_ECHOPGM("Advanced: B<min_segment_time_us> S<min_feedrate> T<min_travel_feedrate>");
-      #if ENABLED(JUNCTION_DEVIATION)
+      #if DISABLED(CLASSIC_JERK)
         SERIAL_ECHOPGM(" J<junc_dev>");
       #endif
       #if HAS_CLASSIC_JERK
         SERIAL_ECHOPGM(" X<max_x_jerk> Y<max_y_jerk> Z<max_z_jerk>");
-        #if !BOTH(JUNCTION_DEVIATION, LIN_ADVANCE)
+        #if HAS_CLASSIC_E_JERK
           SERIAL_ECHOPGM(" E<max_e_jerk>");
         #endif
       #endif
@@ -2760,14 +2792,14 @@ void MarlinSettings::reset() {
         "  M205 B", LINEAR_UNIT(planner.settings.min_segment_time_us)
       , " S", LINEAR_UNIT(planner.settings.min_feedrate_mm_s)
       , " T", LINEAR_UNIT(planner.settings.min_travel_feedrate_mm_s)
-      #if ENABLED(JUNCTION_DEVIATION)
+      #if DISABLED(CLASSIC_JERK)
         , " J", LINEAR_UNIT(planner.junction_deviation_mm)
       #endif
       #if HAS_CLASSIC_JERK
         , " X", LINEAR_UNIT(planner.max_jerk.x)
         , " Y", LINEAR_UNIT(planner.max_jerk.y)
         , " Z", LINEAR_UNIT(planner.max_jerk.z)
-        #if !BOTH(JUNCTION_DEVIATION, LIN_ADVANCE)
+        #if HAS_CLASSIC_E_JERK
           , " E", LINEAR_UNIT(planner.max_jerk.e)
         #endif
       #endif
@@ -2911,14 +2943,13 @@ void MarlinSettings::reset() {
         , " Z", LINEAR_UNIT(delta_endstop_adj.c)
       );
 
-      CONFIG_ECHO_HEADING("Delta settings: L<diagonal_rod> R<radius> H<height> S<segments_per_s> B<calibration radius> XYZ<tower angle corrections>");
+      CONFIG_ECHO_HEADING("Delta settings: L<diagonal_rod> R<radius> H<height> S<segments_per_s> XYZ<tower angle corrections>");
       CONFIG_ECHO_START();
       SERIAL_ECHOLNPAIR(
           "  M665 L", LINEAR_UNIT(delta_diagonal_rod)
         , " R", LINEAR_UNIT(delta_radius)
         , " H", LINEAR_UNIT(delta_height)
         , " S", delta_segments_per_second
-        , " B", LINEAR_UNIT(delta_calibration_radius)
         , " X", LINEAR_UNIT(delta_tower_angle_trim.a)
         , " Y", LINEAR_UNIT(delta_tower_angle_trim.b)
         , " Z", LINEAR_UNIT(delta_tower_angle_trim.c)
@@ -2964,38 +2995,26 @@ void MarlinSettings::reset() {
     #if HAS_PID_HEATING
 
       CONFIG_ECHO_HEADING("PID settings:");
+
       #if ENABLED(PIDTEMP)
-        #if HOTENDS > 1
-          if (forReplay) {
-            HOTEND_LOOP() {
-              CONFIG_ECHO_START();
-              SERIAL_ECHOPAIR(
-                  "  M301 E", e
-                , " P", PID_PARAM(Kp, e)
-                , " I", unscalePID_i(PID_PARAM(Ki, e))
-                , " D", unscalePID_d(PID_PARAM(Kd, e))
-              );
-              #if ENABLED(PID_EXTRUSION_SCALING)
-                SERIAL_ECHOPAIR(" C", PID_PARAM(Kc, e));
-                if (e == 0) SERIAL_ECHOPAIR(" L", thermalManager.lpq_len);
-              #endif
-              SERIAL_EOL();
-            }
-          }
-          else
-        #endif // HOTENDS > 1
-        // !forReplay || HOTENDS == 1
-        {
+        HOTEND_LOOP() {
           CONFIG_ECHO_START();
-          SERIAL_ECHOLNPAIR(
-              "  M301 P", PID_PARAM(Kp, 0) // for compatibility with hosts, only echo values for E0
-            , " I", unscalePID_i(PID_PARAM(Ki, 0))
-            , " D", unscalePID_d(PID_PARAM(Kd, 0))
-            #if ENABLED(PID_EXTRUSION_SCALING)
-              , " C", PID_PARAM(Kc, 0)
-              , " L", thermalManager.lpq_len
+          SERIAL_ECHOPAIR("  M301"
+            #if HOTENDS > 1 && ENABLED(PID_PARAMS_PER_HOTEND)
+              " E", e,
             #endif
+              " P", PID_PARAM(Kp, e)
+            , " I", unscalePID_i(PID_PARAM(Ki, e))
+            , " D", unscalePID_d(PID_PARAM(Kd, e))
           );
+          #if ENABLED(PID_EXTRUSION_SCALING)
+            SERIAL_ECHOPAIR(" C", PID_PARAM(Kc, e));
+            if (e == 0) SERIAL_ECHOPAIR(" L", thermalManager.lpq_len);
+          #endif
+          #if ENABLED(PID_FAN_SCALING)
+            SERIAL_ECHOPAIR(" F", PID_PARAM(Kf, e));
+          #endif
+          SERIAL_EOL();
         }
       #endif // PIDTEMP
 
