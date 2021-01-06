@@ -71,7 +71,7 @@
 // @section info
 
 // Author info of this build printed to the host during boot and M115
-#define STRING_CONFIG_H_AUTHOR "(Ryan J. Geyer - Ender 3 Pro, E3D v6, FYSETC Cheetah v1.2a, BLTouch, DD Extruder)" // Who made the changes.
+#define STRING_CONFIG_H_AUTHOR "(Ryan J. Geyer - Ender 3 Pro, E3D v6, Bigtreetech SKR 1.3, BLTouch, DD Extruder)" // Who made the changes.
 #define STRING_CONFIG_H_AUTHOR "(none, default config)" // Who made the changes.
 //#define CUSTOM_VERSION_FILE Version.h // Path from the root directory (no quotes)
 
@@ -104,7 +104,7 @@
  *
  * :[-1, 0, 1, 2, 3, 4, 5, 6, 7]
  */
-#define SERIAL_PORT 1 // libmaple 0 for USB ,1 for serial
+#define SERIAL_PORT -1 // libmaple 0 for USB ,1 for serial
 
 /**
  * Select a secondary serial port on the board to use for communication with the host.
@@ -113,7 +113,7 @@
  *
  * :[-1, 0, 1, 2, 3, 4, 5, 6, 7]
  */
-//#define SERIAL_PORT_2 -1
+#define SERIAL_PORT_2 0
 
 /**
  * This setting determines the communication speed of the printer.
@@ -131,7 +131,7 @@
 
 // Choose the name from boards.h that matches your setup
 #ifndef MOTHERBOARD
-  #define MOTHERBOARD BOARD_FYSETC_CHEETAH_V12
+  #define MOTHERBOARD BOARD_BIGTREE_SKR_V1_3
 #endif
 
 // Name displayed in the LCD "Ready" message and Info menu
@@ -475,10 +475,20 @@
 
   // If you are using a pre-configured hotend then you can use one of the value sets by uncommenting it
 
-  // Creality Ender-3 Pro - E3D v6 Hotend
-  #define  DEFAULT_Kp 26.76
-  #define  DEFAULT_Ki 2.05
-  #define  DEFAULT_Kd 87.12
+  // // Creality Ender-3 Pro - E3D v6 Hotend
+  // #define  DEFAULT_Kp 26.76
+  // #define  DEFAULT_Ki 2.05
+  // #define  DEFAULT_Kd 87.12
+
+  // // Creality Ender-3 Pro - E3D v6 Hotend w/ sock 230C 12-6-2019
+  // #define DEFAULT_Kp 22.45
+  // #define DEFAULT_Ki 1.46
+  // #define DEFAULT_Kd 86.34
+  
+  // Creality Ender-3 Pro - E3D v6 Hotend w/o sock 230C 12-10-2019
+  #define DEFAULT_Kp 20.62
+  #define DEFAULT_Ki 1.32
+  #define DEFAULT_Kd 80.50
 
 #endif // PIDTEMP
 
@@ -767,7 +777,18 @@
   #endif
 #endif
 
-#define DEFAULT_EJERK    5.0  // May be used by Linear Advance
+#define DEFAULT_EJERK 5.0 // May be used by Linear Advance
+
+/**
+ * Junction Deviation Factor
+ *
+ * See:
+ *   https://reprap.org/forum/read.php?1,739819
+ *   http://blog.kyneticcnc.com/2018/10/computing-junction-deviation-for-marlin.html
+ */
+#if DISABLED(CLASSIC_JERK)
+  #define JUNCTION_DEVIATION_MM 0.013 // (mm) Distance from real junction edge
+#endif
 
 /**
  * S-Curve Acceleration
@@ -900,7 +921,7 @@
  *
  * Specify a Probe position as { X, Y, Z }
  */
-#define NOZZLE_TO_PROBE_OFFSET { -27.85, 4.28, -5 }
+#define NOZZLE_TO_PROBE_OFFSET { -27.85, 4.28, -2.15 }
 
 // Certain types of probes need to stay away from edges
 #define MIN_PROBE_EDGE 10
@@ -1631,7 +1652,7 @@
 // This option overrides the default number of encoder pulses needed to
 // produce one step. Should be increased for high-resolution encoders.
 //
-//#define ENCODER_PULSES_PER_STEP 4
+#define ENCODER_PULSES_PER_STEP 4
 
 //
 // Use this option to override the number of step signals required to
@@ -1654,7 +1675,7 @@
 //
 //  Set this option if CLOCKWISE causes values to DECREASE
 //
-//#define REVERSE_ENCODER_DIRECTION
+#define REVERSE_ENCODER_DIRECTION
 
 //
 // This option reverses the encoder direction for navigating LCD menus.
